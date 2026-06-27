@@ -9,8 +9,8 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 
 const URLS = {
-  producao: { host: "www.nfse.gov.br", path: "/SefinNacional/nfse" },
-  homologacao: { host: "sefin.producaorestrita.nfse.gov.br", path: "/API/SefinNacional/nfse" }
+  producao:    { host: "sefin.nfse.gov.br",                  path: "/SefinNacional/nfse" },
+  homologacao: { host: "sefin.producaorestrita.nfse.gov.br", path: "/SefinNacional/nfse" }
 };
 
 function carregarCertificadoBase64(pfxBase64, senha) {
