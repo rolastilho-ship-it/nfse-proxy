@@ -57,9 +57,9 @@ function montarDpsXml(d) {
   const cLocEmiStr = String(d.cLocEmi).padStart(7, "0");
   const docLimpo = String(d.cnpj).replace(/\D/g, "");
   const isCnpj = docLimpo.length === 14;
-  const tpInsc = isCnpj ? "2" : "1";        // 1=CPF, 2=CNPJ
-  const tagDoc = isCnpj ? "CNPJ" : "CPF";   // tag XML segundo o schema
-  const docPadId = docLimpo.padStart(14, "0"); // só no ID vai padded
+  const tpInsc = isCnpj ? "2" : "1";
+  const tagDoc = isCnpj ? "CNPJ" : "CPF";
+  const docPadId = docLimpo.padStart(14, "0");
   const serieStr = String(d.serie).padStart(5, "0");
   const nDPSStr = String(d.nDPS).padStart(15, "0");
   const id = "DPS" + cLocEmiStr + tpInsc + docPadId + serieStr + nDPSStr;
@@ -120,21 +120,47 @@ function montarDpsXml(d) {
         .up()
       .up();
 
-  return root.end({ prettyPrint: false });
+  return { xml: root.end({ prettyPrint: false }), id };
 }
 
-function assinarXml(xmlStr, keyPem, certPem) {
-  const certBase64 = certPem.replace("-----BEGIN CERTIFICATE-----","").replace("-----END CERTIFICATE-----","").replace(/\n/g,"");
-  const sig = new SignedXml({ privateKey: keyPem });
-  sig.addReference({ xpath: "//*[local-name(.)='infDPS']", transforms: ["http://www.w3.org/2001/10/xml-exc-c14n#"], digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256" });
-  sig.canonicalizationAlgorithm = "http://www.w3.org/2001/10/xml-exc-c14n#";
-  sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
-  sig.keyInfoProvider = { getKeyInfo: () => "<X509Data><X509Certificate>" + certBase64 + "</X509Certificate></X509Data>" };
-  sig.computeSignature(xmlStr);
+// === ASSINATURA XMLDSig conforme exigido pela NFS-e Nacional (SPED) ===
+function assinarXml(xmlStr, id, keyPem, certPem) {
+  const certBase64 = certPem
+    .replace("-----BEGIN CERTIFICATE-----", "")
+    .replace("-----END CERTIFICATE-----", "")
+    .replace(/[\r\n]/g, "");
+
+  const sig = new SignedXml({
+    privateKey: keyPem,
+    signatureAlgorithm: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+    canonicalizationAlgorithm: "http://www.w3.org/2001/10/xml-exc-c14n#",
+  });
+
+  // Reference aponta para o Id do infDPS via URI (não XPath)
+  // com as DUAS transformações exigidas pelo SPED:
+  //   1) enveloped-signature   2) c14n exclusiva
+  sig.addReference({
+    xpath: `//*[@Id='${id}']`,
+    transforms: [
+      "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+      "http://www.w3.org/2001/10/xml-exc-c14n#",
+    ],
+    digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
+    uri: `#${id}`,
+  });
+
+  sig.getKeyInfoContent = () =>
+    `<X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data>`;
+
+  sig.computeSignature(xmlStr, {
+    prefix: "",
+    location: { reference: `//*[local-name(.)='infDPS']`, action: "after" },
+  });
+
   return sig.getSignedXml();
 }
 
-const comprimirBase64 = (xmlStr) => zlib.gzipSync(Buffer.from(xmlStr,"utf-8")).toString("base64");
+const comprimirBase64 = (xmlStr) => zlib.gzipSync(Buffer.from(xmlStr, "utf-8")).toString("base64");
 
 app.get("/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
@@ -146,7 +172,7 @@ app.post("/nfse/testar", async (req, res) => {
     const url = URLS[ambiente];
     const r = await httpsGet(url.host, url.path, certPem, keyPem, chainPem);
     res.json({ ok: true, status: r.status, mensagem: "Certificado valido" });
-  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post("/nfse/emitir", async (req, res) => {
@@ -154,15 +180,15 @@ app.post("/nfse/emitir", async (req, res) => {
     const { cnpj, senha_cert, pfx_base64, ambiente = "producao", dps, prest, tomador } = req.body;
     if (!cnpj || !senha_cert || !pfx_base64 || !dps) return res.status(400).json({ ok: false, error: "campos obrigatorios (cnpj, senha_cert, pfx_base64, dps)" });
     const { certPem, keyPem, chainPem } = carregarCertificadoBase64(pfx_base64, senha_cert);
-    const xmlStr = montarDpsXml({ cnpj, ...dps, prest, tomador: tomador || dps.tomador });
-    const xmlAssinado = assinarXml(xmlStr, keyPem, certPem);
+    const { xml: xmlStr, id } = montarDpsXml({ cnpj, ...dps, prest, tomador: tomador || dps.tomador });
+    const xmlAssinado = assinarXml(xmlStr, id, keyPem, certPem);
     const payload = comprimirBase64(xmlAssinado);
     const url = URLS[ambiente] || URLS.producao;
     const r = await httpsPost(url.host, url.path, { dpsXmlGZipB64: payload }, certPem, keyPem, chainPem);
-    let resultado; try { resultado = JSON.parse(r.body); } catch(e) { resultado = r.body; }
+    let resultado; try { resultado = JSON.parse(r.body); } catch (e) { resultado = r.body; }
     if (r.status >= 400) return res.status(400).json({ ok: false, error: JSON.stringify(resultado) });
     res.json({ ok: true, dados: resultado });
-  } catch(e) { console.error(e); res.status(500).json({ ok: false, error: e.message }); }
+  } catch (e) { console.error(e); res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post("/nfse/cancelar", async (req, res) => {
@@ -172,9 +198,9 @@ app.post("/nfse/cancelar", async (req, res) => {
     const { certPem, keyPem, chainPem } = carregarCertificadoBase64(pfx_base64, senha_cert);
     const url = URLS[ambiente] || URLS.producao;
     const r = await httpsPost(url.host, url.path + "/" + chave_nfse + "/eventos", { xJust: motivo }, certPem, keyPem, chainPem);
-    let resultado; try { resultado = JSON.parse(r.body); } catch(e) { resultado = r.body; }
+    let resultado; try { resultado = JSON.parse(r.body); } catch (e) { resultado = r.body; }
     res.json({ ok: r.status < 400, dados: resultado });
-  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 const PORT = process.env.PORT || 3001;
