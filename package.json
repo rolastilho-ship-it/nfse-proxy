@@ -1,13 +1,18 @@
 {
   "name": "nfse-proxy",
   "version": "1.0.0",
-  "type": "module",
+  "description": "Proxy NFS-e Nacional com certificado digital",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "node-fetch": "^3.3.2"
+    "express": "^4.19.2",
+    "node-forge": "^1.3.1",
+    "xml-crypto": "^6.0.0",
+    "xmlbuilder2": "^3.1.1"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
