@@ -54,12 +54,16 @@ function httpsGet(host, urlPath, certPem, keyPem, chainPem) {
 }
 
 function montarDpsXml(d) {
-  const cLocEmiStr = String(d.cLocEmi).padStart(7,"0");
-  const tpInsc = String(d.cnpj).replace(/\D/g,"").length === 14 ? "2" : "1";
-  const docStr = String(d.cnpj).replace(/\D/g,"").padStart(14,"0");
-  const serieStr = String(d.serie).padStart(5,"0");
-  const nDPSStr = String(d.nDPS).padStart(15,"0");
-  const id = "DPS" + cLocEmiStr + tpInsc + docStr + serieStr + nDPSStr;
+  const cLocEmiStr = String(d.cLocEmi).padStart(7, "0");
+  const docLimpo = String(d.cnpj).replace(/\D/g, "");
+  const isCnpj = docLimpo.length === 14;
+  const tpInsc = isCnpj ? "2" : "1";        // 1=CPF, 2=CNPJ
+  const tagDoc = isCnpj ? "CNPJ" : "CPF";   // tag XML segundo o schema
+  const docPadId = docLimpo.padStart(14, "0"); // só no ID vai padded
+  const serieStr = String(d.serie).padStart(5, "0");
+  const nDPSStr = String(d.nDPS).padStart(15, "0");
+  const id = "DPS" + cLocEmiStr + tpInsc + docPadId + serieStr + nDPSStr;
+
   const root = create({ version: "1.0", encoding: "UTF-8" })
     .ele("DPS", { xmlns: "http://www.sped.fazenda.gov.br/nfse", versao: "1.00" })
     .ele("infDPS", { Id: id })
@@ -72,11 +76,14 @@ function montarDpsXml(d) {
       .ele("tpEmit").txt("1").up()
       .ele("cLocEmi").txt(String(d.cLocEmi)).up()
       .ele("prest")
-        .ele("CNPJ").txt(String(d.cnpj).replace(/\D/g,"")).up()
+        .ele(tagDoc).txt(docLimpo).up()
         .ele("IM").txt(String(d.im)).up()
         .ele("xNome").txt(d.prest?.xNome || "EMPRESA TESTE").up()
         .ele("end")
-          .ele("endNac").ele("cMun").txt(String(d.prest?.end?.cMun || d.cLocEmi)).up().ele("CEP").txt(String(d.prest?.end?.CEP || "36320000")).up().up()
+          .ele("endNac")
+            .ele("cMun").txt(String(d.prest?.end?.cMun || d.cLocEmi)).up()
+            .ele("CEP").txt(String(d.prest?.end?.CEP || "36320000")).up()
+          .up()
           .ele("xLgr").txt(d.prest?.end?.xLgr || "RUA TESTE").up()
           .ele("nro").txt(String(d.prest?.end?.nro || "100")).up()
           .ele("xBairro").txt(d.prest?.end?.xBairro || "CENTRO").up()
@@ -88,18 +95,31 @@ function montarDpsXml(d) {
           .ele("regEspTrib").txt(String(d.prest?.regTrib?.regEspTrib ?? 0)).up()
         .up()
       .up();
+
   if (d.tomador) {
     const t = root.ele("toma");
-    if (d.tomador.cpf) t.ele("CPF").txt(d.tomador.cpf.replace(/\D/g,"")).up();
-    else if (d.tomador.cnpj) t.ele("CNPJ").txt(d.tomador.cnpj.replace(/\D/g,"")).up();
+    if (d.tomador.cpf) t.ele("CPF").txt(d.tomador.cpf.replace(/\D/g, "")).up();
+    else if (d.tomador.cnpj) t.ele("CNPJ").txt(d.tomador.cnpj.replace(/\D/g, "")).up();
     if (d.tomador.nome) t.ele("xNome").txt(d.tomador.nome).up();
     t.up();
   }
+
   root.ele("serv")
       .ele("locPrest").ele("cLocPrestacao").txt(String(d.cLocIncid)).up().up()
       .ele("cServ").ele("cTribNac").txt(d.cTribNac).up().ele("xDescServ").txt(d.xDescServ).up().up()
     .up();
-  root.ele("valores").ele("vServPrest").ele("vServ").txt(parseFloat(d.vServ).toFixed(2)).up().up().ele("trib").ele("tribMun").ele("tribISSQN").txt("1").up().ele("tpRetISSQN").txt("1").up().up().ele("totTrib").ele("indTotTrib").txt(String(d.indTotTrib||"0")).up().up().up().up();
+
+  root.ele("valores")
+        .ele("vServPrest").ele("vServ").txt(parseFloat(d.vServ).toFixed(2)).up().up()
+        .ele("trib")
+          .ele("tribMun")
+            .ele("tribISSQN").txt("1").up()
+            .ele("tpRetISSQN").txt("1").up()
+          .up()
+          .ele("totTrib").ele("indTotTrib").txt(String(d.indTotTrib || "0")).up().up()
+        .up()
+      .up();
+
   return root.end({ prettyPrint: false });
 }
 
