@@ -75,12 +75,10 @@ function montarDpsXml(d) {
       .ele("dCompet").txt(d.dCompet).up()
       .ele("tpEmit").txt("1").up()
       .ele("cLocEmi").txt(String(d.cLocEmi)).up()
-      // tpEmit=1 (prestador = emitente): NAO enviar <end> (E0128).
-      // xNome enviado pois lista de elementos esperados do XSD inclui ele.
+      // tpEmit=1 (prestador = emitente): NAO enviar <xNome> (E0121) nem <end> (E0128).
       .ele("prest")
         .ele(tagDoc).txt(docLimpo).up()
         .ele("IM").txt(String(d.im)).up()
-        .ele("xNome").txt(String(d.prest?.xNome || d.prest?.nome || "PRESTADOR TESTE")).up()
         .ele("fone").txt(String(d.prest?.fone || "32999999999")).up()
         .ele("email").txt(d.prest?.email || "teste@teste.com").up()
         .ele("regTrib")
