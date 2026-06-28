@@ -8,7 +8,7 @@ const zlib = require("zlib");
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-const PROXY_VERSION = "2026-06-28-cancelar-evento-xml-assinado";
+const PROXY_VERSION = "2026-06-28-cancelar-ped-reg-evento";
 
 const URLS = {
   producao:    { host: "sefin.nfse.gov.br",                  path: "/SefinNacional/nfse" },
@@ -148,30 +148,40 @@ function assinarXml(xmlStr, id, keyPem, certPem, refLocator) {
   return sig.getSignedXml();
 }
 
-function montarEventoCancelamentoXml({ chave_nfse, cnpj, motivo, nSeqEvento = 1, ambiente }) {
+function montarPedidoRegistroCancelamentoXml({ chave_nfse, cnpj, motivo, nPedRegEvento = 1, ambiente }) {
   const docLimpo = String(cnpj).replace(/\D/g, "");
   const isCnpj = docLimpo.length === 14;
-  const tagDoc = isCnpj ? "CNPJ" : "CPF";
+  const tagAutor = isCnpj ? "CNPJAutor" : "CPFAutor";
   const tpAmb = ambiente === "producao" ? "1" : "2";
-  const tpEvento = "1";
-  const id = "EVENTO" + chave_nfse + String(tpEvento).padStart(2, "0") + String(nSeqEvento).padStart(3, "0");
-  const dhEvento = new Date().toISOString().replace(/\.\d{3}Z$/, "-03:00");
+  const pedido = String(nPedRegEvento).padStart(3, "0");
+  const id = "PRE" + chave_nfse + "101" + pedido;
+  const dhEvento = new Date(Date.now() - 5000).toISOString().replace(/\.\d{3}Z$/, "-03:00");
+  const xMotivo = String(motivo).trim().slice(0, 255);
+
+  if (!docLimpo || ![11, 14].includes(docLimpo.length)) {
+    throw new Error("cnpj/cpf do autor deve ter 11 ou 14 digitos");
+  }
+  if (xMotivo.length < 15) {
+    throw new Error("Motivo do cancelamento deve ter no minimo 15 caracteres");
+  }
 
   const root = create({ version: "1.0", encoding: "UTF-8" })
-    .ele("evento", { xmlns: "http://www.sped.fazenda.gov.br/nfse", versao: "1.00" })
-    .ele("infEvento", { Id: id })
-      .ele("cClassEvento").txt("101").up()
-      .ele("tpEvento").txt(tpEvento).up()
-      .ele("nSeqEvento").txt(String(nSeqEvento)).up()
-      .ele("dhEvento").txt(dhEvento).up()
-      .ele("verAplic").txt("NFSeProxy-1.0").up()
-      .ele("chNFSe").txt(chave_nfse).up()
+    .ele("pedRegEvento", { xmlns: "http://www.sped.fazenda.gov.br/nfse", versao: "1.00" })
+    .ele("infPedReg", { Id: id })
       .ele("tpAmb").txt(tpAmb).up()
-      .ele(tagDoc).txt(docLimpo).up()
-      .ele("xJust").txt(String(motivo).slice(0, 255)).up()
+      .ele("verAplic").txt("NFSeProxy-1.0").up()
+      .ele("dhEvento").txt(dhEvento).up()
+      .ele(tagAutor).txt(docLimpo).up()
+      .ele("chNFSe").txt(chave_nfse).up()
+      .ele("e101101")
+        .ele("xDesc").txt("Cancelamento de NFS-e").up()
+        .ele("cMotivo").txt("1").up()
+        .ele("xMotivo").txt(xMotivo).up()
+      .up()
     .up();
 
-  return { xml: root.end({ prettyPrint: false }), id };
+  const xml = root.end({ prettyPrint: false });
+  return { xml, id };
 }
 
 const comprimirBase64 = (xmlStr) => zlib.gzipSync(Buffer.from(xmlStr, "utf-8")).toString("base64");
@@ -182,7 +192,7 @@ function healthPayload() {
     ts: new Date().toISOString(),
     version: PROXY_VERSION,
     regra_prestador_tpEmit1: "sem xNome e sem end no prest",
-    cancelamento: "XML <evento> assinado XMLDSig + gzip+base64 em eventoXmlGZipB64",
+    cancelamento: "XML <pedRegEvento> assinado XMLDSig + gzip+base64 em pedidoRegistroEventoXmlGZipB64",
   };
 }
 
@@ -218,24 +228,28 @@ app.post("/nfse/emitir", async (req, res) => {
 
 app.post("/nfse/cancelar", async (req, res) => {
   try {
-    const { cnpj, senha_cert, pfx_base64, ambiente = "producao", chave_nfse, motivo, nSeqEvento = 1 } = req.body;
+    const { cnpj, senha_cert, pfx_base64, ambiente = "producao", chave_nfse, motivo, nPedRegEvento = 1 } = req.body;
     if (!cnpj || !senha_cert || !pfx_base64 || !chave_nfse || !motivo) {
       return res.status(400).json({ ok: false, error: "campos obrigatorios: cnpj, senha_cert, pfx_base64, chave_nfse, motivo" });
     }
     if (String(chave_nfse).replace(/\D/g, "").length !== 50) {
       return res.status(400).json({ ok: false, error: "chave_nfse deve ter 50 digitos" });
     }
+
     const { certPem, keyPem, chainPem } = carregarCertificadoBase64(pfx_base64, senha_cert);
-    const { xml: xmlEvento, id } = montarEventoCancelamentoXml({ chave_nfse, cnpj, motivo, nSeqEvento, ambiente });
-    const xmlAssinado = assinarXml(xmlEvento, id, keyPem, certPem, `//*[local-name(.)='infEvento']`);
+
+    const { xml: xmlEvento, id } = montarPedidoRegistroCancelamentoXml({ chave_nfse, cnpj, motivo, nPedRegEvento, ambiente });
+    const xmlAssinado = assinarXml(xmlEvento, id, keyPem, certPem, `//*[local-name(.)='infPedReg']`);
     const payload = comprimirBase64(xmlAssinado);
+
     const url = URLS[ambiente] || URLS.producao;
     const r = await httpsPost(
       url.host,
       url.path + "/" + chave_nfse + "/eventos",
-      { eventoXmlGZipB64: payload },
+      { pedidoRegistroEventoXmlGZipB64: payload },
       certPem, keyPem, chainPem
     );
+
     let resultado; try { resultado = JSON.parse(r.body); } catch (e) { resultado = r.body; }
     if (r.status >= 400) {
       return res.status(400).json({ ok: false, status: r.status, error: typeof resultado === "string" ? resultado : JSON.stringify(resultado), dados: resultado });
