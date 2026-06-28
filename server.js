@@ -79,15 +79,8 @@ function montarDpsXml(d) {
         .ele(tagDoc).txt(docLimpo).up()
         .ele("IM").txt(String(d.im)).up()
         .ele("xNome").txt(d.prest?.xNome || "EMPRESA TESTE").up()
-        .ele("end")
-          .ele("endNac")
-            .ele("cMun").txt(String(d.prest?.end?.cMun || d.cLocEmi)).up()
-            .ele("CEP").txt(String(d.prest?.end?.CEP || "36320000")).up()
-          .up()
-          .ele("xLgr").txt(d.prest?.end?.xLgr || "RUA TESTE").up()
-          .ele("nro").txt(String(d.prest?.end?.nro || "100")).up()
-          .ele("xBairro").txt(d.prest?.end?.xBairro || "CENTRO").up()
-        .up()
+        // E0128: quando tpEmit=1 (prestador = emitente), o gov.br PROIBE
+        // enviar <end> do prestador na DPS. O endereco ja esta no cadastro municipal.
         .ele("fone").txt(String(d.prest?.fone || "32999999999")).up()
         .ele("email").txt(d.prest?.email || "teste@teste.com").up()
         .ele("regTrib")
@@ -123,7 +116,6 @@ function montarDpsXml(d) {
   return { xml: root.end({ prettyPrint: false }), id };
 }
 
-// === ASSINATURA XMLDSig conforme exigido pela NFS-e Nacional (SPED) ===
 function assinarXml(xmlStr, id, keyPem, certPem) {
   const certBase64 = certPem
     .replace("-----BEGIN CERTIFICATE-----", "")
@@ -136,9 +128,6 @@ function assinarXml(xmlStr, id, keyPem, certPem) {
     canonicalizationAlgorithm: "http://www.w3.org/2001/10/xml-exc-c14n#",
   });
 
-  // Reference aponta para o Id do infDPS via URI (não XPath)
-  // com as DUAS transformações exigidas pelo SPED:
-  //   1) enveloped-signature   2) c14n exclusiva
   sig.addReference({
     xpath: `//*[@Id='${id}']`,
     transforms: [
