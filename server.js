@@ -75,12 +75,19 @@ function montarDpsXml(d) {
       .ele("dCompet").txt(d.dCompet).up()
       .ele("tpEmit").txt("1").up()
       .ele("cLocEmi").txt(String(d.cLocEmi)).up()
-      // Quando tpEmit=1 (prestador = emitente da DPS), o gov.br SO aceita
-      // o documento + IM no bloco <prest>. Enviar xNome/end/fone/email/regTrib
-      // dispara E0121/E0128 — esses dados sao buscados do cadastro municipal.
+      // tpEmit=1 (prestador = emitente):
+      //  - E0121: NAO enviar <xNome>
+      //  - E0128: NAO enviar <end>
+      //  - E1235: XSD exige <fone>, <email>, <regTrib>
       .ele("prest")
         .ele(tagDoc).txt(docLimpo).up()
         .ele("IM").txt(String(d.im)).up()
+        .ele("fone").txt(String(d.prest?.fone || "32999999999")).up()
+        .ele("email").txt(d.prest?.email || "teste@teste.com").up()
+        .ele("regTrib")
+          .ele("opSimpNac").txt(String(d.prest?.regTrib?.opSimpNac ?? 1)).up()
+          .ele("regEspTrib").txt(String(d.prest?.regTrib?.regEspTrib ?? 0)).up()
+        .up()
       .up();
 
   if (d.tomador) {
