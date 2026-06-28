@@ -75,13 +75,20 @@ function montarDpsXml(d) {
       .ele("dCompet").txt(d.dCompet).up()
       .ele("tpEmit").txt("1").up()
       .ele("cLocEmi").txt(String(d.cLocEmi)).up()
-      // tpEmit=1 (prestador = emitente):
-      //  - E0121: NAO enviar <xNome>
-      //  - E0128: NAO enviar <end>
-      //  - E1235: XSD exige <fone>, <email>, <regTrib>
+      // XSD exige no <prest>: xNome, end (com endNac), fone, email, regTrib
       .ele("prest")
         .ele(tagDoc).txt(docLimpo).up()
         .ele("IM").txt(String(d.im)).up()
+        .ele("xNome").txt(String(d.prest?.xNome || d.prest?.nome || "PRESTADOR TESTE")).up()
+        .ele("end")
+          .ele("endNac")
+            .ele("cMun").txt(String(d.prest?.end?.cMun || d.cLocEmi)).up()
+            .ele("CEP").txt(String(d.prest?.end?.CEP || "36000000").replace(/\D/g, "")).up()
+          .up()
+          .ele("xLgr").txt(String(d.prest?.end?.xLgr || "RUA TESTE")).up()
+          .ele("nro").txt(String(d.prest?.end?.nro || "100")).up()
+          .ele("xBairro").txt(String(d.prest?.end?.xBairro || "CENTRO")).up()
+        .up()
         .ele("fone").txt(String(d.prest?.fone || "32999999999")).up()
         .ele("email").txt(d.prest?.email || "teste@teste.com").up()
         .ele("regTrib")
