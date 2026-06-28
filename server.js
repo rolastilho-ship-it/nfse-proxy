@@ -8,7 +8,7 @@ const zlib = require("zlib");
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-const PROXY_VERSION = "2026-06-28-no-xnome-no-end-prest-tpemit1";
+const PROXY_VERSION = "2026-06-28-cancelar-evento-xml-assinado";
 
 const URLS = {
   producao:    { host: "sefin.nfse.gov.br",                  path: "/SefinNacional/nfse" },
@@ -115,7 +115,7 @@ function montarDpsXml(d) {
   return { xml: root.end({ prettyPrint: false }), id };
 }
 
-function assinarXml(xmlStr, id, keyPem, certPem) {
+function assinarXml(xmlStr, id, keyPem, certPem, refLocator) {
   const certBase64 = certPem
     .replace("-----BEGIN CERTIFICATE-----", "")
     .replace("-----END CERTIFICATE-----", "")
@@ -142,10 +142,36 @@ function assinarXml(xmlStr, id, keyPem, certPem) {
 
   sig.computeSignature(xmlStr, {
     prefix: "",
-    location: { reference: `//*[local-name(.)='infDPS']`, action: "after" },
+    location: { reference: refLocator || `//*[local-name(.)='infDPS']`, action: "after" },
   });
 
   return sig.getSignedXml();
+}
+
+function montarEventoCancelamentoXml({ chave_nfse, cnpj, motivo, nSeqEvento = 1, ambiente }) {
+  const docLimpo = String(cnpj).replace(/\D/g, "");
+  const isCnpj = docLimpo.length === 14;
+  const tagDoc = isCnpj ? "CNPJ" : "CPF";
+  const tpAmb = ambiente === "producao" ? "1" : "2";
+  const tpEvento = "1";
+  const id = "EVENTO" + chave_nfse + String(tpEvento).padStart(2, "0") + String(nSeqEvento).padStart(3, "0");
+  const dhEvento = new Date().toISOString().replace(/\.\d{3}Z$/, "-03:00");
+
+  const root = create({ version: "1.0", encoding: "UTF-8" })
+    .ele("evento", { xmlns: "http://www.sped.fazenda.gov.br/nfse", versao: "1.00" })
+    .ele("infEvento", { Id: id })
+      .ele("cClassEvento").txt("101").up()
+      .ele("tpEvento").txt(tpEvento).up()
+      .ele("nSeqEvento").txt(String(nSeqEvento)).up()
+      .ele("dhEvento").txt(dhEvento).up()
+      .ele("verAplic").txt("NFSeProxy-1.0").up()
+      .ele("chNFSe").txt(chave_nfse).up()
+      .ele("tpAmb").txt(tpAmb).up()
+      .ele(tagDoc).txt(docLimpo).up()
+      .ele("xJust").txt(String(motivo).slice(0, 255)).up()
+    .up();
+
+  return { xml: root.end({ prettyPrint: false }), id };
 }
 
 const comprimirBase64 = (xmlStr) => zlib.gzipSync(Buffer.from(xmlStr, "utf-8")).toString("base64");
@@ -156,6 +182,7 @@ function healthPayload() {
     ts: new Date().toISOString(),
     version: PROXY_VERSION,
     regra_prestador_tpEmit1: "sem xNome e sem end no prest",
+    cancelamento: "XML <evento> assinado XMLDSig + gzip+base64 em eventoXmlGZipB64",
   };
 }
 
@@ -191,14 +218,33 @@ app.post("/nfse/emitir", async (req, res) => {
 
 app.post("/nfse/cancelar", async (req, res) => {
   try {
-    const { cnpj, senha_cert, pfx_base64, ambiente = "producao", chave_nfse, motivo } = req.body;
-    if (!cnpj || !senha_cert || !pfx_base64 || !chave_nfse || !motivo) return res.status(400).json({ ok: false, error: "campos obrigatorios" });
+    const { cnpj, senha_cert, pfx_base64, ambiente = "producao", chave_nfse, motivo, nSeqEvento = 1 } = req.body;
+    if (!cnpj || !senha_cert || !pfx_base64 || !chave_nfse || !motivo) {
+      return res.status(400).json({ ok: false, error: "campos obrigatorios: cnpj, senha_cert, pfx_base64, chave_nfse, motivo" });
+    }
+    if (String(chave_nfse).replace(/\D/g, "").length !== 50) {
+      return res.status(400).json({ ok: false, error: "chave_nfse deve ter 50 digitos" });
+    }
     const { certPem, keyPem, chainPem } = carregarCertificadoBase64(pfx_base64, senha_cert);
+    const { xml: xmlEvento, id } = montarEventoCancelamentoXml({ chave_nfse, cnpj, motivo, nSeqEvento, ambiente });
+    const xmlAssinado = assinarXml(xmlEvento, id, keyPem, certPem, `//*[local-name(.)='infEvento']`);
+    const payload = comprimirBase64(xmlAssinado);
     const url = URLS[ambiente] || URLS.producao;
-    const r = await httpsPost(url.host, url.path + "/" + chave_nfse + "/eventos", { xJust: motivo }, certPem, keyPem, chainPem);
+    const r = await httpsPost(
+      url.host,
+      url.path + "/" + chave_nfse + "/eventos",
+      { eventoXmlGZipB64: payload },
+      certPem, keyPem, chainPem
+    );
     let resultado; try { resultado = JSON.parse(r.body); } catch (e) { resultado = r.body; }
-    res.json({ ok: r.status < 400, dados: resultado });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+    if (r.status >= 400) {
+      return res.status(400).json({ ok: false, status: r.status, error: typeof resultado === "string" ? resultado : JSON.stringify(resultado), dados: resultado });
+    }
+    res.json({ ok: true, status: r.status, dados: resultado });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 const PORT = process.env.PORT || 3001;
