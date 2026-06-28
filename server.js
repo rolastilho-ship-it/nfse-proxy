@@ -8,6 +8,8 @@ const zlib = require("zlib");
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+const PROXY_VERSION = "2026-06-28-no-xnome-no-end-prest-tpemit1";
+
 const URLS = {
   producao:    { host: "sefin.nfse.gov.br",                  path: "/SefinNacional/nfse" },
   homologacao: { host: "sefin.producaorestrita.nfse.gov.br", path: "/SefinNacional/nfse" }
@@ -75,7 +77,6 @@ function montarDpsXml(d) {
       .ele("dCompet").txt(d.dCompet).up()
       .ele("tpEmit").txt("1").up()
       .ele("cLocEmi").txt(String(d.cLocEmi)).up()
-      // tpEmit=1 (prestador = emitente): NAO enviar <xNome> (E0121) nem <end> (E0128).
       .ele("prest")
         .ele(tagDoc).txt(docLimpo).up()
         .ele("IM").txt(String(d.im)).up()
@@ -149,7 +150,17 @@ function assinarXml(xmlStr, id, keyPem, certPem) {
 
 const comprimirBase64 = (xmlStr) => zlib.gzipSync(Buffer.from(xmlStr, "utf-8")).toString("base64");
 
-app.get("/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+function healthPayload() {
+  return {
+    ok: true,
+    ts: new Date().toISOString(),
+    version: PROXY_VERSION,
+    regra_prestador_tpEmit1: "sem xNome e sem end no prest",
+  };
+}
+
+app.get("/", (_req, res) => res.json(healthPayload()));
+app.get("/health", (_req, res) => res.json(healthPayload()));
 
 app.post("/nfse/testar", async (req, res) => {
   try {
@@ -191,4 +202,4 @@ app.post("/nfse/cancelar", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, "0.0.0.0", () => console.log("[nfse-proxy] porta " + PORT));
+app.listen(PORT, "0.0.0.0", () => console.log("[nfse-proxy] porta " + PORT + " versao " + PROXY_VERSION));
